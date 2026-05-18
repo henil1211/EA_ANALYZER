@@ -125,7 +125,7 @@ class AIAnalyzer:
         weak_day, weak_day_value = self._weakest_bucket(weekday_profit)
         best_session, best_session_value = self._strongest_bucket(session_profit)
         live_slippage_hit = self._live_stress_cost(metrics, trades)
-        minimum_capital = self._minimum_capital(metrics, trades)
+        minimum_capital = self._minimum_capital(metrics)
         capital_base = self._capital_base(metrics, trades)
         largest_win = max(wins) if wins else 0.0
         largest_loss = max(losses) if losses else 0.0
