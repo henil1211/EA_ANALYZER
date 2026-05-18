@@ -1066,7 +1066,7 @@ class AIAnalyzer:
             ),
         )
         capital_required = max(
-            self._minimum_capital(metrics, trades),
+            self._minimum_capital(metrics),
             capital_base + dd_money * 2 if capital_base else dd_money * 3,
             capital_base + monte_carlo["p95_drawdown"] * 1.5 if capital_base else monte_carlo["p95_drawdown"] * 2,
         )
