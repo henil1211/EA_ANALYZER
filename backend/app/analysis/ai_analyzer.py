@@ -437,8 +437,8 @@ class AIAnalyzer:
 
     def _risk_score(self, metrics: BacktestMetrics, behavior: BehaviorAnalysis) -> ScoreData:
         dd_pct = self._equity_dd_pct(metrics)
-        balance_dd = metrics.balance_drawdown_maximal or self._drawdown(metrics.maximal_drawdown, dd_pct)
-        equity_dd = metrics.equity_drawdown_maximal or self._drawdown(metrics.maximal_drawdown, dd_pct)
+        balance_dd = metrics.balance_drawdown_maximal or self._drawdown_text(metrics.maximal_drawdown, dd_pct)
+        equity_dd = metrics.equity_drawdown_maximal or self._drawdown_text(metrics.maximal_drawdown, dd_pct)
         score = 100
         if dd_pct >= 30:
             score -= 55
@@ -1834,6 +1834,9 @@ class AIAnalyzer:
 
     def _value_or_na(self, value: float) -> str:
         return f"{value:.2f}" if value else "N/A"
+
+    def _drawdown(self, money: float, pct: float) -> str:
+        return self._drawdown_text(money, pct)
 
     def _drawdown_text(self, money: float, pct: float) -> str:
         if money and pct:
