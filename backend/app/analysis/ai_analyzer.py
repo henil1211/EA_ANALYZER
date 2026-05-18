@@ -29,8 +29,8 @@ class AIAnalyzer:
         trades: List[TradeRecord],
     ) -> AIAnalysisResult:
         trade_count = metrics.total_trades or len(trades)
-        dd_pct = metrics.maximal_drawdown_pct
-        dd_money = metrics.maximal_drawdown
+        dd_pct = self._equity_dd_pct(metrics)
+        dd_money = self._equity_dd_money(metrics)
         drawdown_for_scoring = self._equity_dd_pct(metrics)
         pf = metrics.profit_factor
         win_rate = metrics.win_rate
@@ -77,7 +77,7 @@ class AIAnalyzer:
                 f"Uploaded report analysis for {metrics.symbol or 'the strategy'}: "
                 f"{trade_count} trades, net profit {self._money(net_profit)}, "
                 f"profit factor {self._value_or_na(pf)}, win rate {self._pct_text(win_rate)}, "
-                f"and max drawdown {self._drawdown_text(dd_money, dd_pct)}. Verdict: {verdict}."
+                f"and max equity drawdown {metrics.equity_drawdown_maximal or self._drawdown_text(dd_money, dd_pct)}. Verdict: {verdict}."
             ),
             profitability_score=profitability_score,
             risk_score=risk_score,
@@ -267,7 +267,7 @@ class AIAnalyzer:
                 f"{recovery_trades} trades" if recovery_trades else "N/A",
                 "Measures how long it took to recover from the worst equity dip.",
                 [
-                    f"Max drawdown: {self._drawdown_text(metrics.maximal_drawdown, metrics.maximal_drawdown_pct)}.",
+                    f"Max equity drawdown: {metrics.equity_drawdown_maximal or self._drawdown_text(dd_money, dd_pct)}.",
                     f"Recovery factor: {self._value_or_na(metrics.recovery_factor)}.",
                 ],
                 "Lower risk or improve exits if recovery takes too many trades." if recovery_trades and recovery_trades > 50 else "Recovery speed is acceptable from the parsed curve.",
@@ -344,10 +344,10 @@ class AIAnalyzer:
                 "High capital need" if minimum_capital > capital_base * 1.5 and capital_base else "Within current scale",
                 "warning" if minimum_capital > capital_base * 1.5 and capital_base else "info",
                 self._money(minimum_capital),
-                "Suggests safer capital using historical drawdown with buffer.",
+                "Suggests safer capital using historical equity drawdown with buffer.",
                 [
                     f"Capital base used: {self._money(capital_base)}.",
-                    f"Max drawdown amount: {self._money(metrics.maximal_drawdown)}.",
+                    f"Max equity drawdown amount: {metrics.equity_drawdown_maximal or self._money(dd_money)}.",
                 ],
                 "Scale down lots or increase capital buffer." if minimum_capital > capital_base * 1.5 and capital_base else "Current capital is not below the simple buffer estimate.",
             ),
@@ -458,7 +458,7 @@ class AIAnalyzer:
         details = [
             f"Balance drawdown: {balance_dd}.",
             f"Equity drawdown: {equity_dd}.",
-            f"Max drawdown used for scoring: {metrics.equity_drawdown_maximal or self._drawdown_text(metrics.maximal_drawdown, dd_pct)}.",
+            f"Max equity drawdown used for scoring: {metrics.equity_drawdown_maximal or self._drawdown_text(metrics.maximal_drawdown, dd_pct)}.",
             f"Recovery factor: {self._value_or_na(metrics.recovery_factor)}.",
             "Lot escalation detected." if behavior.lot_escalation_detected else "No major lot escalation detected from parsed trades.",
         ]
@@ -553,7 +553,7 @@ class AIAnalyzer:
         self, metrics: BacktestMetrics, behavior: BehaviorAnalysis, dd_pct: float, trade_count: int
     ) -> str:
         parts = [
-            f"Risk was calculated from the uploaded report using {trade_count} trades and {metrics.equity_drawdown_maximal or self._drawdown_text(metrics.maximal_drawdown, dd_pct)} max drawdown."
+            f"Risk was calculated from the uploaded report using {trade_count} trades and {metrics.equity_drawdown_maximal or self._drawdown_text(metrics.maximal_drawdown, dd_pct)} max equity drawdown."
         ]
         if dd_pct >= 20:
             parts.append("Drawdown is high enough to threaten funded-account and compounding use.")
@@ -589,7 +589,7 @@ class AIAnalyzer:
         if behavior.is_martingale or behavior.is_grid:
             return "Prop firm risk is poor because martingale/grid style behavior is commonly restricted or manually reviewed."
         if dd_pct > 10:
-            return "Prop firm risk is elevated because max drawdown is above a common 10 percent overall limit."
+            return "Prop firm risk is elevated because max equity drawdown is above a common 10 percent overall limit."
         if dd_pct > 5:
             return "Prop firm compatibility is possible, but daily loss limits need tighter lot sizing and stop control."
         if score >= 75:
@@ -612,6 +612,23 @@ class AIAnalyzer:
         if parsed:
             return parsed
         return metrics.maximal_drawdown_pct or self._pct(metrics.maximal_drawdown, metrics.deposit)
+
+    def _equity_dd_money(self, metrics: BacktestMetrics) -> float:
+        parsed = self._parse_dd_money(metrics.equity_drawdown_maximal) or self._parse_dd_money(metrics.equity_drawdown_relative)
+        if parsed is not None:
+            return parsed
+        return metrics.maximal_drawdown
+
+    def _parse_dd_money(self, text: Optional[str]) -> Optional[float]:
+        if not text:
+            return None
+        match = re.search(r"([\d,.]+)", text)
+        if not match:
+            return None
+        try:
+            return abs(float(match.group(1).replace(",", "")))
+        except ValueError:
+            return None
 
     def _behavior_summary(self, behavior: BehaviorAnalysis, trades: List[TradeRecord], trade_count: int) -> str:
         detected = []
@@ -669,8 +686,9 @@ class AIAnalyzer:
             strengths.append(f"Positive net profit of {self._money(metrics.net_profit)}.")
         if metrics.profit_factor >= 1.5:
             strengths.append(f"Profit factor of {metrics.profit_factor} shows a positive gross profit/loss ratio.")
-        if metrics.maximal_drawdown_pct and metrics.maximal_drawdown_pct < 10:
-            strengths.append(f"Reported drawdown is contained at {metrics.maximal_drawdown_pct}%.")
+        equity_dd_pct = self._equity_dd_pct(metrics)
+        if equity_dd_pct and equity_dd_pct < 10:
+            strengths.append(f"Reported equity drawdown is contained at {equity_dd_pct}%.")
         if trade_count >= 100:
             strengths.append(f"Trade sample is meaningful at {trade_count} trades.")
         if not behavior.is_martingale and not behavior.is_grid:
@@ -683,8 +701,9 @@ class AIAnalyzer:
             weaknesses.append("Net profit is not positive in the uploaded report.")
         if metrics.profit_factor and metrics.profit_factor < 1.2:
             weaknesses.append("Profit factor is too close to breakeven.")
-        if metrics.maximal_drawdown_pct >= 10:
-            weaknesses.append(f"Drawdown of {metrics.maximal_drawdown_pct}% limits scalability.")
+        equity_dd_pct = self._equity_dd_pct(metrics)
+        if equity_dd_pct >= 10:
+            weaknesses.append(f"Equity drawdown of {equity_dd_pct}% limits scalability.")
         if behavior.lot_escalation_detected:
             weaknesses.append(f"Lot sizing expands up to {behavior.lot_escalation_factor}x.")
         if trade_count < 50:
@@ -709,7 +728,7 @@ class AIAnalyzer:
         recs = []
         dd_pct = metrics.maximal_drawdown_pct or self._pct(metrics.maximal_drawdown, metrics.deposit)
         if dd_pct > 10:
-            recs.append("Lower risk per trade until max drawdown is below 10 percent for prop-firm style use.")
+            recs.append("Lower risk per trade until max equity drawdown is below 10 percent for prop-firm style use.")
         if behavior.is_martingale:
             recs.append("Replace loss-based lot multiplication with fixed fractional or volatility-adjusted sizing.")
         if behavior.is_grid:
@@ -1302,7 +1321,7 @@ class AIAnalyzer:
                 "Psychologically hard" if underwater["longest"] >= 100 or underwater["ulcer_index"] >= 10 else "Manageable",
                 "warning" if underwater["longest"] >= 100 or underwater["ulcer_index"] >= 10 else "info",
                 f"Ulcer {underwater['ulcer_index']:.2f}",
-                "Measures how painful the equity curve is beyond max drawdown alone.",
+                "Measures how painful the equity curve is beyond max equity drawdown alone.",
                 [
                     f"Longest underwater period: {underwater['longest']} trades.",
                     f"Average recovery period: {underwater['average']:.1f} trades.",
@@ -1339,7 +1358,7 @@ class AIAnalyzer:
                     f"95th percentile drawdown: {self._money(monte_carlo['p95_drawdown'])}.",
                     f"Simulations: {monte_carlo['runs']}.",
                 ],
-                "Size the account from the stressed drawdown, not only the historical max drawdown.",
+                "Size the account from the stressed equity drawdown, not only the historical max equity drawdown.",
             ),
             self._insight(
                 "natural-language-report",
@@ -1366,7 +1385,7 @@ class AIAnalyzer:
                 "Likely rule risk" if dd_pct >= 10 or soft_martingale_probability >= 65 else "Needs daily DD check" if dd_pct >= 5 else "Compatible candidate",
                 "critical" if dd_pct >= 10 or soft_martingale_probability >= 65 else "warning" if dd_pct >= 5 else "positive",
                 f"DD {dd_pct:.2f}%",
-                "Checks common funded-account risks: max drawdown, recovery logic, consistency, and overtrading.",
+                "Checks common funded-account risks: max equity drawdown, recovery logic, consistency, and overtrading.",
                 [
                     f"Max DD versus common 10% limit: {dd_pct:.2f}%.",
                     f"Recovery/martingale probability: {soft_martingale_probability}%.",
@@ -1746,7 +1765,7 @@ class AIAnalyzer:
         if metrics.maximal_drawdown or metrics.maximal_drawdown_pct:
             score += 5
         else:
-            limitations.append("Drawdown confidence is limited because the report did not expose max drawdown clearly.")
+            limitations.append("Drawdown confidence is limited because the report did not expose max equity drawdown clearly.")
 
         if metrics.profit_factor and metrics.expected_payoff:
             score += 3
