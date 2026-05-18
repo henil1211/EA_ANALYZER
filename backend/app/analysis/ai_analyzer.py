@@ -1,4 +1,5 @@
 import random
+import re
 import statistics
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
@@ -30,7 +31,7 @@ class AIAnalyzer:
         trade_count = metrics.total_trades or len(trades)
         dd_pct = metrics.maximal_drawdown_pct
         dd_money = metrics.maximal_drawdown
-        drawdown_for_scoring = dd_pct or self._pct(dd_money, metrics.deposit)
+        drawdown_for_scoring = self._equity_dd_pct(metrics)
         pf = metrics.profit_factor
         win_rate = metrics.win_rate
         net_profit = metrics.net_profit
@@ -435,7 +436,7 @@ class AIAnalyzer:
         return self._score("Profitability", score, f"Net: {self._money(metrics.net_profit)}", details)
 
     def _risk_score(self, metrics: BacktestMetrics, behavior: BehaviorAnalysis) -> ScoreData:
-        dd_pct = metrics.maximal_drawdown_pct or self._pct(metrics.maximal_drawdown, metrics.deposit)
+        dd_pct = self._equity_dd_pct(metrics)
         balance_dd = metrics.balance_drawdown_maximal or self._drawdown(metrics.maximal_drawdown, dd_pct)
         equity_dd = metrics.equity_drawdown_maximal or self._drawdown(metrics.maximal_drawdown, dd_pct)
         score = 100
@@ -457,7 +458,7 @@ class AIAnalyzer:
         details = [
             f"Balance drawdown: {balance_dd}.",
             f"Equity drawdown: {equity_dd}.",
-            f"Max drawdown used for scoring: {self._drawdown_text(metrics.maximal_drawdown, metrics.maximal_drawdown_pct)}.",
+            f"Max drawdown used for scoring: {metrics.equity_drawdown_maximal or self._drawdown_text(metrics.maximal_drawdown, dd_pct)}.",
             f"Recovery factor: {self._value_or_na(metrics.recovery_factor)}.",
             "Lot escalation detected." if behavior.lot_escalation_detected else "No major lot escalation detected from parsed trades.",
         ]
@@ -497,7 +498,7 @@ class AIAnalyzer:
     def _survivability_score(
         self, metrics: BacktestMetrics, behavior: BehaviorAnalysis, trade_count: int
     ) -> ScoreData:
-        dd_pct = metrics.maximal_drawdown_pct or self._pct(metrics.maximal_drawdown, metrics.deposit)
+        dd_pct = self._equity_dd_pct(metrics)
         score = 85
         score -= min(55, int(dd_pct * 1.5))
         if metrics.profit_factor and metrics.profit_factor < 1.2:
@@ -508,7 +509,7 @@ class AIAnalyzer:
             score -= 8
 
         details = [
-            f"Capital stress level is based on {self._drawdown_text(metrics.maximal_drawdown, metrics.maximal_drawdown_pct)}.",
+            f"Capital stress level is based on {metrics.equity_drawdown_maximal or self._drawdown_text(metrics.maximal_drawdown, dd_pct)}.",
             "Dangerous recovery behavior detected." if behavior.dangerous_recovery_system else "No dangerous recovery pattern confirmed.",
             f"Trade sample: {trade_count} parsed/report trades.",
         ]
@@ -517,7 +518,7 @@ class AIAnalyzer:
     def _prop_firm_score(
         self, metrics: BacktestMetrics, behavior: BehaviorAnalysis, trade_count: int
     ) -> ScoreData:
-        dd_pct = metrics.maximal_drawdown_pct or self._pct(metrics.maximal_drawdown, metrics.deposit)
+        dd_pct = self._equity_dd_pct(metrics)
         score = 90
         if dd_pct > 10:
             score -= min(60, int((dd_pct - 10) * 4))
@@ -552,7 +553,7 @@ class AIAnalyzer:
         self, metrics: BacktestMetrics, behavior: BehaviorAnalysis, dd_pct: float, trade_count: int
     ) -> str:
         parts = [
-            f"Risk was calculated from the uploaded report using {trade_count} trades and {self._drawdown_text(metrics.maximal_drawdown, metrics.maximal_drawdown_pct)} max drawdown."
+            f"Risk was calculated from the uploaded report using {trade_count} trades and {metrics.equity_drawdown_maximal or self._drawdown_text(metrics.maximal_drawdown, dd_pct)} max drawdown."
         ]
         if dd_pct >= 20:
             parts.append("Drawdown is high enough to threaten funded-account and compounding use.")
@@ -584,7 +585,7 @@ class AIAnalyzer:
         return text, slippage, dependency
 
     def _prop_firm_safety(self, metrics: BacktestMetrics, behavior: BehaviorAnalysis, score: int) -> str:
-        dd_pct = metrics.maximal_drawdown_pct or self._pct(metrics.maximal_drawdown, metrics.deposit)
+        dd_pct = self._equity_dd_pct(metrics)
         if behavior.is_martingale or behavior.is_grid:
             return "Prop firm risk is poor because martingale/grid style behavior is commonly restricted or manually reviewed."
         if dd_pct > 10:
@@ -605,6 +606,12 @@ class AIAnalyzer:
         if behavior.dangerous_recovery_system:
             return "Fragile: recovery-based behavior can fail suddenly during one-sided markets.", "1-3 months without risk redesign"
         return "High Risk: report metrics do not show enough capital protection.", "3-6 months unless drawdown is reduced"
+
+    def _equity_dd_pct(self, metrics: BacktestMetrics) -> float:
+        parsed = self._parse_dd_pct(metrics.equity_drawdown_maximal) or self._parse_dd_pct(metrics.equity_drawdown_relative)
+        if parsed:
+            return parsed
+        return metrics.maximal_drawdown_pct or self._pct(metrics.maximal_drawdown, metrics.deposit)
 
     def _behavior_summary(self, behavior: BehaviorAnalysis, trades: List[TradeRecord], trade_count: int) -> str:
         detected = []
@@ -967,8 +974,8 @@ class AIAnalyzer:
         durations = [trade.duration_minutes for trade in trades if trade.duration_minutes is not None]
         lots = [trade.size for trade in trades if trade.size > 0]
         equity = self._equity_values(metrics, trades)
-        dd_pct = metrics.maximal_drawdown_pct or self._pct(metrics.maximal_drawdown, metrics.deposit)
-        dd_money = metrics.maximal_drawdown or self._max_drawdown_money(equity)
+        dd_pct = self._equity_dd_pct(metrics) or self._max_drawdown_pct(equity)
+        dd_money = self._max_drawdown_money(equity)
         avg_duration = (sum(durations) / len(durations)) if durations else metrics.average_trade_duration
         avg_win = metrics.average_profit or (sum(wins) / len(wins) if wins else 0.0)
         avg_loss = metrics.average_loss or (sum(losses) / len(losses) if losses else 0.0)
@@ -1566,6 +1573,28 @@ class AIAnalyzer:
             peak = max(peak, value)
             worst = max(worst, peak - value)
         return round(worst, 2)
+
+    def _max_drawdown_pct(self, equity: List[float]) -> float:
+        if not equity:
+            return 0.0
+        peak = equity[0]
+        worst = 0.0
+        for value in equity:
+            peak = max(peak, value)
+            if peak > 0:
+                worst = max(worst, (peak - value) / peak * 100)
+        return round(worst, 2)
+
+    def _parse_dd_pct(self, text: Optional[str]) -> Optional[float]:
+        if not text:
+            return None
+        percent_match = re.search(r"(-?[\d,.]+)\s*%", text)
+        if percent_match:
+            try:
+                return abs(float(percent_match.group(1).replace(",", ".")))
+            except ValueError:
+                return None
+        return None
 
     def _underwater_stats(self, equity: List[float]) -> Dict[str, float]:
         if len(equity) < 2:
