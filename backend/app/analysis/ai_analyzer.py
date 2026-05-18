@@ -460,6 +460,8 @@ class AIAnalyzer:
             f"Recovery factor: {self._value_or_na(metrics.recovery_factor)}.",
             "Lot escalation detected." if behavior.lot_escalation_detected else "No major lot escalation detected from parsed trades.",
         ]
+        if behavior.balance_based_lot_growth_detected:
+            details.insert(3, "Lot growth appears balance/profit based and is not treated as martingale-style escalation.")
         summary = f"Balance DD: {balance_dd} · Equity DD: {equity_dd}"
         return self._score("Risk Management", score, summary, details)
 

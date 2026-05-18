@@ -160,6 +160,7 @@ class BehaviorAnalysis(BaseModel):
     lot_escalation_factor: float = 0.0
     overtrading_detected: bool = False
     dangerous_recovery_system: bool = False
+    balance_based_lot_growth_detected: bool = False
     avg_lot: float = 0.0
     min_lot: float = 0.0
     max_lot: float = 0.0

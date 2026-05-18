@@ -37,11 +37,44 @@ class BehaviorAnalyzer:
                 analysis.is_scalping = True
                 analysis.scalping_confidence = round(min(100, (5 - avg_duration) * 20 + 50), 2)
         
-        # 5. Detect Lot Escalation
-        if analysis.min_lot > 0:
-            analysis.lot_escalation_factor = round(analysis.max_lot / analysis.min_lot, 2)
-            if analysis.lot_escalation_factor >= 3:
-                analysis.lot_escalation_detected = True
+        # 5. Detect Lot Escalation vs balance-based auto lot growth
+        analysis.lot_escalation_factor = round(analysis.max_lot / analysis.min_lot, 2) if analysis.min_lot > 0 else 0.0
+        lot_growth_events = 0
+        loss_linked_growth = 0
+        profit_linked_growth = 0
+
+        for i in range(1, len(trades)):
+            prev = trades[i - 1]
+            curr = trades[i]
+            prev_size = prev.size or 0
+            curr_size = curr.size or 0
+            if prev_size <= 0 or curr_size <= 0:
+                continue
+
+            if curr_size > prev_size * 1.05:
+                lot_growth_events += 1
+
+                same_symbol_overlap = bool(
+                    prev.item
+                    and curr.item
+                    and prev.item == curr.item
+                    and prev.type == curr.type
+                    and prev.open_time
+                    and prev.close_time
+                    and curr.open_time
+                    and curr.open_time < prev.close_time
+                )
+
+                if prev.profit < 0 or same_symbol_overlap:
+                    loss_linked_growth += 1
+                elif prev.profit > 0:
+                    profit_linked_growth += 1
+
+        if lot_growth_events:
+            balance_based_ratio = profit_linked_growth / lot_growth_events
+            loss_based_ratio = loss_linked_growth / lot_growth_events
+            analysis.balance_based_lot_growth_detected = balance_based_ratio >= 0.6 and loss_based_ratio == 0
+            analysis.lot_escalation_detected = loss_based_ratio >= 0.5 and not analysis.balance_based_lot_growth_detected
                 
         # 6. Overtrading
         dated_trades = [t for t in trades if t.open_time or t.close_time]
