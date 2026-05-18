@@ -134,6 +134,12 @@ class AIAnalyzer:
         avg_loss = metrics.average_loss or (sum(losses) / len(losses) if losses else 0.0)
         tail_ratio = (avg_loss / avg_profit) if avg_profit else 0.0
         lot_profile = self._lot_profile(behavior, trades)
+        # compute trade-level momentum/MFE-MAE stats for personality heuristics
+        mfe_stats = self._mfe_mae_stats(trades)
+        pct_momentum = self._pct_trades_with_momentum(trades)
+        # stash for _personality best-effort access
+        setattr(self, "_last_mfe_mae_stats", mfe_stats)
+        setattr(self, "_last_pct_momentum", pct_momentum)
         personality = self._personality(metrics, behavior, durations, dd_pct)
         hidden_strengths = self._hidden_strengths(metrics, behavior, trades, top_profit_share, recovery_trades)
         hidden_weaknesses = self._hidden_weaknesses(metrics, behavior, trades, top_profit_share, worst_cluster_loss, capital_base)
@@ -630,6 +636,47 @@ class AIAnalyzer:
         except ValueError:
             return None
 
+    def _mfe_mae_stats(self, trades: List[TradeRecord]) -> Tuple[Optional[float], Optional[float], float]:
+        """Return (median_mfe, median_mae, pct_mfe_gt_mae).
+
+        pct_mfe_gt_mae: percent of trades where mfe >= mae (both present).
+        """
+        mfes = [t.mfe for t in trades if t.mfe is not None]
+        maes = [t.mae for t in trades if t.mae is not None]
+        paired = [(t.mfe, t.mae) for t in trades if t.mfe is not None and t.mae is not None]
+        median_mfe = statistics.median(mfes) if mfes else None
+        median_mae = statistics.median(maes) if maes else None
+        pct = 0.0
+        if paired:
+            count = sum(1 for m, a in paired if (m or 0) >= (a or 0))
+            pct = (count / len(paired)) * 100
+        return median_mfe, median_mae, pct
+
+    def _pct_trades_with_momentum(self, trades: List[TradeRecord], mfe_mae_mult: float = 2.0, window_minutes: float = 30.0) -> float:
+        """Estimate percent of trades that exhibit fast momentum after entry.
+
+        Uses MFE/MAE when available; falls back to volatility_at_entry if supplied.
+        """
+        if not trades:
+            return 0.0
+        ok = 0
+        total = 0
+        for t in trades:
+            mfe = t.mfe
+            mae = t.mae
+            total += 1
+            if mfe is not None and mae is not None:
+                if mfe >= mae * mfe_mae_mult:
+                    ok += 1
+                continue
+            # fallback: use volatility_at_entry as a rough ATR proxy
+            vol = t.volatility_at_entry
+            dur = t.duration_minutes or 9999
+            if vol is not None and mfe is not None:
+                if mfe >= vol * mfe_mae_mult and dur <= window_minutes:
+                    ok += 1
+        return (ok / total) * 100 if total else 0.0
+
     def _behavior_summary(self, behavior: BehaviorAnalysis, trades: List[TradeRecord], trade_count: int) -> str:
         detected = []
         if behavior.is_martingale:
@@ -911,39 +958,75 @@ class AIAnalyzer:
         dd_pct: float,
     ) -> Tuple[str, str, str, List[str], str]:
         avg_duration = sum(durations) / len(durations) if durations else metrics.average_trade_duration
-        # Prefer strong structural signals first
+        # Strong structural signals take priority
         if behavior.is_martingale:
             label, severity = "Recovery / martingale-like", "critical"
         elif behavior.is_grid:
             label, severity = "Grid or mean-reversion", "warning"
-
-        # New: breakout / momentum detection.
-        # Breakout strategies can still have short realized durations if targets are hit quickly,
-        # so we use risk/reward, expectancy and profit-factor signals rather than duration alone.
-        elif (
-            (metrics.risk_reward_ratio and metrics.risk_reward_ratio >= 1.2)
-            and (metrics.expected_payoff and metrics.expected_payoff > 0)
-            and (metrics.profit_factor and metrics.profit_factor >= 1.2)
-        ):
-            label, severity = "Breakout / momentum-style EA", "positive"
-
-        # Classic scalper detection (short duration) comes after breakout check so we don't
-        # incorrectly mark quick-hit breakout trades as scalping.
-        elif avg_duration and avg_duration < 10:
-            label, severity = "Fast scalper", "warning"
-        elif dd_pct > 15:
-            label, severity = "High-return high-drawdown system", "warning"
         else:
-            label, severity = "Directional / controlled-risk EA", "positive"
+            # gather trade-level signals
+            median_mfe, median_mae, pct_mfe_ge_mae = self._mfe_mae_stats([]) if not durations else (None, None, 0.0)
+            # attempt to compute from trades where available via forensic data in hidden_details path
+            try:
+                # try to access trades from a higher scope if present (best-effort)
+                # many callers pass only durations here; hidden_details uses full trades path for richer evidence
+                median_mfe, median_mae, pct_mfe_ge_mae = getattr(self, "_last_mfe_mae_stats", (median_mfe, median_mae, pct_mfe_ge_mae))
+            except Exception:
+                pass
+
+            # conservative numeric guards
+            pf = metrics.profit_factor or 0.0
+            rr = metrics.risk_reward_ratio or 0.0
+            exp = metrics.expected_payoff or 0.0
+
+            # Breakout / Momentum detection: multiple possible fingerprints
+            pct_momentum = getattr(self, "_last_pct_momentum", 0.0)
+            breakout_condition = (
+                (rr >= 1.2 and exp > 0 and pf >= 1.2)
+                and (
+                    (median_mfe is not None and median_mae is not None and median_mfe >= (median_mae * 2))
+                    or pct_momentum >= 35.0
+                    or (avg_duration and avg_duration >= 30 and pf >= 1.2)
+                )
+            )
+
+            if breakout_condition:
+                label, severity = "Breakout / momentum-style EA", "positive"
+            elif avg_duration and avg_duration >= 120:
+                label, severity = "Trend follower / swing EA", "positive"
+            else:
+                # mean-reversion / range detection
+                if median_mae is not None and median_mfe is not None and median_mae >= (median_mfe * 1.5):
+                    label, severity = "Mean-reversion / range EA", "warning"
+                elif avg_duration and avg_duration < 10 or behavior.is_scalping:
+                    label, severity = "Fast scalper", "warning"
+                elif pct_momentum >= 25 and pf >= 1.1:
+                    label, severity = "Momentum / breakout-leaning EA", "positive"
+                else:
+                    label, severity = "Directional / controlled-risk EA", "positive"
+
+        # Build evidence list (best-effort)
+        evidence: List[str] = []
+        if avg_duration:
+            evidence.append(f"Average duration: {avg_duration:.1f} min.")
+        else:
+            evidence.append("Duration unavailable.")
+        evidence.append(f"Win rate: {self._pct_text(metrics.win_rate)}.")
+        evidence.append(f"Expected payoff: {self._money(metrics.expected_payoff)}.")
+
+        # Add MFE/MAE summary if available
+        try:
+            median_mfe, median_mae, pct_mfe_ge_mae = getattr(self, "_last_mfe_mae_stats", (None, None, 0.0))
+            if median_mfe is not None and median_mae is not None:
+                evidence.append(f"Median MFE {median_mfe:.2f} vs MAE {median_mae:.2f} ({pct_mfe_ge_mae:.0f}% MFE≥MAE)")
+        except Exception:
+            pass
+
         return (
             label,
             severity,
             f"PF {metrics.profit_factor:.2f}, DD {dd_pct:.2f}%",
-            [
-                f"Average duration: {avg_duration:.1f} min." if avg_duration else "Duration unavailable.",
-                f"Win rate: {self._pct_text(metrics.win_rate)}.",
-                f"Expected payoff: {self._money(metrics.expected_payoff)}.",
-            ],
+            evidence[:4],
             "Match broker, spread, and capital plan to this EA personality.",
         )
 
