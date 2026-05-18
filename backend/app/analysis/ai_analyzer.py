@@ -911,10 +911,24 @@ class AIAnalyzer:
         dd_pct: float,
     ) -> Tuple[str, str, str, List[str], str]:
         avg_duration = sum(durations) / len(durations) if durations else metrics.average_trade_duration
+        # Prefer strong structural signals first
         if behavior.is_martingale:
             label, severity = "Recovery / martingale-like", "critical"
         elif behavior.is_grid:
             label, severity = "Grid or mean-reversion", "warning"
+
+        # New: breakout / momentum detection.
+        # Breakout strategies can still have short realized durations if targets are hit quickly,
+        # so we use risk/reward, expectancy and profit-factor signals rather than duration alone.
+        elif (
+            (metrics.risk_reward_ratio and metrics.risk_reward_ratio >= 1.2)
+            and (metrics.expected_payoff and metrics.expected_payoff > 0)
+            and (metrics.profit_factor and metrics.profit_factor >= 1.2)
+        ):
+            label, severity = "Breakout / momentum-style EA", "positive"
+
+        # Classic scalper detection (short duration) comes after breakout check so we don't
+        # incorrectly mark quick-hit breakout trades as scalping.
         elif avg_duration and avg_duration < 10:
             label, severity = "Fast scalper", "warning"
         elif dd_pct > 15:
