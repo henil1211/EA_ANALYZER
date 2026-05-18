@@ -144,6 +144,8 @@ class AIAnalysisResult(BaseModel):
     trade_behavior_summary: str
     equity_analysis: str
     hidden_details: HiddenDetailsResult
+    personality_label: Optional[str] = None
+    personality_evidence: List[str] = Field(default_factory=list)
 
 class BehaviorAnalysis(BaseModel):
     is_martingale: bool = False

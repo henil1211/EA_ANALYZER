@@ -69,6 +69,18 @@ class AIAnalyzer:
         equity_analysis = self._equity_analysis(metrics, trades, drawdown_for_scoring)
         hidden_details = self._forensic_hidden_details(metrics, behavior, trades, trade_count, overfit_probability)
 
+        # Extract personality evidence from hidden details for UI consumption
+        personality_label: Optional[str] = None
+        personality_evidence: List[str] = []
+        try:
+            for ins in hidden_details.insights:
+                if ins.id == "ea-personality":
+                    personality_label = ins.status or None
+                    personality_evidence = ins.evidence or []
+                    break
+        except Exception:
+            pass
+
         return AIAnalysisResult(
             verdict=verdict,
             verdict_color=verdict_color,
@@ -100,6 +112,8 @@ class AIAnalyzer:
             trade_behavior_summary=behavior_summary,
             equity_analysis=equity_analysis,
             hidden_details=hidden_details,
+            personality_label=personality_label,
+            personality_evidence=personality_evidence,
         )
 
     def _hidden_details(
