@@ -995,13 +995,16 @@ class AIAnalyzer:
 
             # Breakout / Momentum detection: multiple possible fingerprints
             pct_momentum = getattr(self, "_last_pct_momentum", 0.0)
+            pct_mfe_ge_mae = (median_mfe is not None and median_mae is not None and (median_mfe >= (median_mae * 1.0)))
+            # Broaden breakout detection: allow strong momentum/MFE signals to override short durations
             breakout_condition = (
-                (rr >= 1.2 and exp > 0 and pf >= 1.2)
-                and (
+                (
                     (median_mfe is not None and median_mae is not None and median_mfe >= (median_mae * 2))
+                    or (pct_mfe_ge_mae and getattr(self, "_last_mfe_mae_stats", (None, None, 0.0))[2] >= 50.0)
                     or pct_momentum >= 35.0
-                    or (avg_duration and avg_duration >= 30 and pf >= 1.2)
                 )
+                or ((rr >= 1.2 and exp > 0 and pf >= 1.2))
+                or (avg_duration and avg_duration >= 30 and pf >= 1.2)
             )
 
             if breakout_condition:
@@ -1010,7 +1013,7 @@ class AIAnalyzer:
                 label, severity = "Trend follower / swing EA", "positive"
             else:
                 # mean-reversion / range detection
-                if median_mae is not None and median_mfe is not None and median_mae >= (median_mfe * 1.5):
+                if median_mae is not None and median_mfe is not None and median_mae >= (median_mfe * 1.5) and getattr(self, "_last_mfe_mae_stats", (None, None, 0.0))[2] < 40:
                     label, severity = "Mean-reversion / range EA", "warning"
                 elif avg_duration and avg_duration < 10 or behavior.is_scalping:
                     label, severity = "Fast scalper", "warning"
