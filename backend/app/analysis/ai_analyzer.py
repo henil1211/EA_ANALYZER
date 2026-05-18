@@ -125,7 +125,8 @@ class AIAnalyzer:
         weak_day, weak_day_value = self._weakest_bucket(weekday_profit)
         best_session, best_session_value = self._strongest_bucket(session_profit)
         live_slippage_hit = self._live_stress_cost(metrics, trades)
-        minimum_capital = self._minimum_capital(metrics)
+        minimum_capital = self._minimum_capital(metrics, trades)
+        capital_base = self._capital_base(metrics, trades)
         largest_win = max(wins) if wins else 0.0
         largest_loss = max(losses) if losses else 0.0
         avg_profit = metrics.average_profit or (sum(wins) / len(wins) if wins else 0.0)
@@ -134,7 +135,7 @@ class AIAnalyzer:
         lot_profile = self._lot_profile(behavior, trades)
         personality = self._personality(metrics, behavior, durations, dd_pct)
         hidden_strengths = self._hidden_strengths(metrics, behavior, trades, top_profit_share, recovery_trades)
-        hidden_weaknesses = self._hidden_weaknesses(metrics, behavior, trades, top_profit_share, worst_cluster_loss)
+        hidden_weaknesses = self._hidden_weaknesses(metrics, behavior, trades, top_profit_share, worst_cluster_loss, capital_base)
 
         hidden_risk_score = 100
         hidden_risk_score -= min(30, int(dd_pct))
@@ -188,7 +189,7 @@ class AIAnalyzer:
                 "worst-loss-sequence",
                 "Worst Losing Sequence Risk",
                 "Stress cluster found" if worst_cluster_loss else "No loss cluster",
-                "critical" if worst_cluster_loss > metrics.deposit * 0.2 and metrics.deposit else "warning" if worst_cluster_loss else "positive",
+                "critical" if worst_cluster_loss > capital_base * 0.2 and capital_base else "warning" if worst_cluster_loss else "positive",
                 f"{self._money(-worst_cluster_loss)} across {worst_cluster_count} trades" if worst_cluster_loss else "N/A",
                 "Shows the deepest consecutive realized losing pressure.",
                 [
@@ -339,15 +340,15 @@ class AIAnalyzer:
             self._insight(
                 "capital-requirement",
                 "Capital Requirement Estimate",
-                "High capital need" if minimum_capital > metrics.deposit * 1.5 and metrics.deposit else "Within current scale",
-                "warning" if minimum_capital > metrics.deposit * 1.5 and metrics.deposit else "info",
+                "High capital need" if minimum_capital > capital_base * 1.5 and capital_base else "Within current scale",
+                "warning" if minimum_capital > capital_base * 1.5 and capital_base else "info",
                 self._money(minimum_capital),
                 "Suggests safer capital using historical drawdown with buffer.",
                 [
-                    f"Initial deposit: {self._money(metrics.deposit)}.",
+                    f"Capital base used: {self._money(capital_base)}.",
                     f"Max drawdown amount: {self._money(metrics.maximal_drawdown)}.",
                 ],
-                "Scale down lots or increase capital buffer." if minimum_capital > metrics.deposit * 1.5 and metrics.deposit else "Current capital is not below the simple buffer estimate.",
+                "Scale down lots or increase capital buffer." if minimum_capital > capital_base * 1.5 and capital_base else "Current capital is not below the simple buffer estimate.",
             ),
             self._insight(
                 "ea-personality",
@@ -837,12 +838,25 @@ class AIAnalyzer:
         return round(min(80.0, abs(rough_cost / metrics.expected_payoff) * 100), 2)
 
     def _minimum_capital(self, metrics: BacktestMetrics) -> float:
-        if metrics.deposit <= 0:
+        capital_base = self._capital_base(metrics, trades)
+        if capital_base <= 0:
             return round(metrics.maximal_drawdown * 3, 2) if metrics.maximal_drawdown else 0.0
-        buffer = max(metrics.deposit, metrics.maximal_drawdown * 3)
+        buffer = max(capital_base, metrics.maximal_drawdown * 3)
         if metrics.maximal_drawdown_pct:
             buffer = max(buffer, metrics.maximal_drawdown / max(metrics.maximal_drawdown_pct / 100, 0.01) * 1.25)
         return round(buffer, 2)
+
+    def _capital_base(self, metrics: BacktestMetrics, trades: List[TradeRecord]) -> float:
+        values = [metrics.deposit or 0.0]
+        for trade in trades:
+            if trade.balance is not None:
+                values.append(float(trade.balance))
+            if trade.equity_at_exit is not None:
+                values.append(float(trade.equity_at_exit))
+            if trade.equity_at_entry is not None:
+                values.append(float(trade.equity_at_entry))
+        positive_values = [value for value in values if value > 0]
+        return round(max(positive_values), 2) if positive_values else 0.0
 
     def _lot_profile(self, behavior: BehaviorAnalysis, trades: List[TradeRecord]) -> Tuple[str, str, str, List[str], str]:
         lots = [trade.size for trade in trades if trade.size > 0]
@@ -921,6 +935,7 @@ class AIAnalyzer:
         trades: List[TradeRecord],
         top_profit_share: float,
         worst_cluster_loss: float,
+        capital_base: float,
     ) -> List[str]:
         weaknesses = []
         if behavior.is_martingale:
@@ -933,7 +948,7 @@ class AIAnalyzer:
             weaknesses.append(f"Top five winners contribute {top_profit_share:.1f}% of net profit.")
         if metrics.average_loss and metrics.average_profit and metrics.average_loss > metrics.average_profit:
             weaknesses.append("Average loss is larger than average win.")
-        if worst_cluster_loss and metrics.deposit and worst_cluster_loss > metrics.deposit * 0.2:
+        if worst_cluster_loss and capital_base and worst_cluster_loss > capital_base * 0.2:
             weaknesses.append("Worst consecutive loss cluster is large versus starting capital.")
         return weaknesses[:5]
 
@@ -1045,14 +1060,14 @@ class AIAnalyzer:
                     - min(35, dd_pct)
                     - min(20, underwater["ulcer_index"] * 1.5)
                     - (15 if top_profit_share > 40 else 0)
-                    - (15 if worst_cluster_loss and deposit and worst_cluster_loss > deposit * 0.2 else 0)
+                    - (15 if worst_cluster_loss and capital_base and worst_cluster_loss > capital_base * 0.2 else 0)
                 ),
             ),
         )
         capital_required = max(
-            self._minimum_capital(metrics),
-            deposit + dd_money * 2 if deposit else dd_money * 3,
-            deposit + monte_carlo["p95_drawdown"] * 1.5 if deposit else monte_carlo["p95_drawdown"] * 2,
+            self._minimum_capital(metrics, trades),
+            capital_base + dd_money * 2 if capital_base else dd_money * 3,
+            capital_base + monte_carlo["p95_drawdown"] * 1.5 if capital_base else monte_carlo["p95_drawdown"] * 2,
         )
         live_survival_score = max(
             0,
@@ -1355,15 +1370,15 @@ class AIAnalyzer:
             self._insight(
                 "capital-requirement",
                 "Capital Requirement Estimator",
-                "Needs more capital" if deposit and capital_required > deposit * 1.5 else "Current scale acceptable",
-                "warning" if deposit and capital_required > deposit * 1.5 else "info",
+                "Needs more capital" if capital_base and capital_required > capital_base * 1.5 else "Current scale acceptable",
+                "warning" if capital_base and capital_required > capital_base * 1.5 else "info",
                 self._money(capital_required),
                 "Estimates minimum safer capital using reported drawdown, Monte Carlo stress, and recovery-system behavior.",
                 [
-                    f"Starting deposit: {self._money(deposit)}.",
+                    f"Capital base used: {self._money(capital_base)}.",
                     f"Historical max DD money: {self._money(dd_money)}.",
                     f"Monte Carlo p95 DD: {self._money(monte_carlo['p95_drawdown'])}.",
-                    f"Recommended buffer: {capital_required / deposit:.2f}x deposit." if deposit else "Deposit unavailable.",
+                    f"Recommended buffer: {capital_required / capital_base:.2f}x capital base." if capital_base else "Capital base unavailable.",
                 ],
                 "Use the recommended capital or reduce lot size proportionally before live deployment.",
             ),
