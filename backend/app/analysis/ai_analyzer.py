@@ -435,6 +435,8 @@ class AIAnalyzer:
 
     def _risk_score(self, metrics: BacktestMetrics, behavior: BehaviorAnalysis) -> ScoreData:
         dd_pct = metrics.maximal_drawdown_pct or self._pct(metrics.maximal_drawdown, metrics.deposit)
+        balance_dd = metrics.balance_drawdown_maximal or self._drawdown(metrics.maximal_drawdown, dd_pct)
+        equity_dd = metrics.equity_drawdown_maximal or self._drawdown(metrics.maximal_drawdown, dd_pct)
         score = 100
         if dd_pct >= 30:
             score -= 55
@@ -452,11 +454,14 @@ class AIAnalyzer:
             score -= 15
 
         details = [
-            f"Max drawdown: {self._drawdown_text(metrics.maximal_drawdown, metrics.maximal_drawdown_pct)}.",
+            f"Balance drawdown: {balance_dd}.",
+            f"Equity drawdown: {equity_dd}.",
+            f"Max drawdown used for scoring: {self._drawdown_text(metrics.maximal_drawdown, metrics.maximal_drawdown_pct)}.",
             f"Recovery factor: {self._value_or_na(metrics.recovery_factor)}.",
             "Lot escalation detected." if behavior.lot_escalation_detected else "No major lot escalation detected from parsed trades.",
         ]
-        return self._score("Risk Management", score, f"DD: {self._pct_text(dd_pct)}", details)
+        summary = f"Balance DD: {balance_dd} · Equity DD: {equity_dd}"
+        return self._score("Risk Management", score, summary, details)
 
     def _stability_score(
         self, metrics: BacktestMetrics, behavior: BehaviorAnalysis, trades: List[TradeRecord]
