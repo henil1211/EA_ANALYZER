@@ -476,7 +476,6 @@ export default function CompareEAs({ onBack }: CompareEAsProps) {
                               accountLifetime={ai.estimated_account_lifetime}
                               overfittingProbability={ai.overfitting_probability}
                               overfittingIndicators={ai.overfitting_indicators || []}
-                              riskSummary={ai.risk_summary}
                             />
                           )}
 

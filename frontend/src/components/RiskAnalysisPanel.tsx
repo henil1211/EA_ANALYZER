@@ -17,9 +17,9 @@ interface RiskAnalysisPanelProps {
   slippageSensitivity: string;
   brokerDependency: string;
   survivability: string;
-  accountLifetime: string;
+  accountLifetime?: string;
   overfittingProbability?: number;
-  overfittingIndicators: string[];
+  overfittingIndicators?: string[];
 }
 
 export default function RiskAnalysisPanel({
@@ -31,7 +31,7 @@ export default function RiskAnalysisPanel({
   survivability,
   accountLifetime,
   overfittingProbability,
-  overfittingIndicators,
+  overfittingIndicators = [],
 }: RiskAnalysisPanelProps) {
   const sensColor =
     slippageSensitivity === "Critical" || slippageSensitivity === "High"

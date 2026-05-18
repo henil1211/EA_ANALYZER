@@ -319,7 +319,7 @@ export default function Home() {
 
                     {activeTab === "verdict" && ai && <AIVerdict verdict={ai.verdict} verdictColor={ai.verdict_color} summary={ai.executive_summary} strengths={ai.strengths || []} weaknesses={ai.weaknesses || []} hiddenRisks={ai.hidden_risks || []} recommendations={ai.recommendations || []} />}
 
-                    {activeTab === "risk" && ai && <RiskAnalysisPanel riskAnalysis={ai.risk_analysis} brokerRequirements={ai.broker_requirements} propFirmSafety={ai.prop_firm_safety} slippageSensitivity={ai.slippage_sensitivity} brokerDependency={ai.broker_dependency_level} survivability={ai.long_term_survivability} riskSummary={ai.risk_summary} />}
+                    {activeTab === "risk" && ai && <RiskAnalysisPanel riskAnalysis={ai.risk_analysis} brokerRequirements={ai.broker_requirements} propFirmSafety={ai.prop_firm_safety} slippageSensitivity={ai.slippage_sensitivity} brokerDependency={ai.broker_dependency_level} survivability={ai.long_term_survivability} />}
 
                     {activeTab === "behavior" && <TradeBehavior behavior={data?.behavior || {}} summary={ai?.trade_behavior_summary} />}
 
