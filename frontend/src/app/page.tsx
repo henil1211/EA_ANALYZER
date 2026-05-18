@@ -206,10 +206,10 @@ export default function Home() {
           <div className="flex flex-col items-center justify-center min-h-[75vh]">
             <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, ease: "easeOut" }} className="text-center mb-12">
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-[10px] font-bold uppercase tracking-wider mb-6">
-                <Brain className="w-3 h-3" /> Powered by GPT-4o
+                <Brain className="w-3 h-3" /> Created For Identifying Hidden Details of EAs
               </div>
               <h2 className="text-5xl md:text-6xl font-black gradient-text mb-6 tracking-tight">Institutional-Grade <br/>EA Auditing</h2>
-              <p className="text-muted-foreground max-w-2xl mx-auto text-lg leading-relaxed font-medium">Professional quantitative risk analysis for MetaTrader backtest reports. Identify hidden Martingale, Grid, and Overfitting in seconds.</p>
+              <p className="text-muted-foreground max-w-2xl mx-auto text-lg leading-relaxed font-medium">Professional quantitative risk analysis for MetaTrader backtest reports. Reveal hidden risks, overfitting, and live-trading vulnerabilities in seconds.</p>
             </motion.div>
 
             <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] w-full max-w-6xl">
