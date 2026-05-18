@@ -980,6 +980,7 @@ class AIAnalyzer:
         pf = metrics.profit_factor or ((gross_profit / gross_loss) if gross_loss else 0.0)
         net_profit = metrics.net_profit or sum(profits)
         deposit = metrics.deposit or (equity[0] if equity else 0.0)
+        capital_base = self._capital_base(metrics, trades)
         top_profit_share = self._top_profit_share(wins, net_profit)
         worst_cluster_loss, worst_cluster_count = self._worst_loss_cluster(trades)
         longest_loss_streak = metrics.consecutive_losses_max or self._longest_loss_streak(trades)
