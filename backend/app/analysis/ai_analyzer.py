@@ -838,7 +838,7 @@ class AIAnalyzer:
         return round(min(80.0, abs(rough_cost / metrics.expected_payoff) * 100), 2)
 
     def _minimum_capital(self, metrics: BacktestMetrics) -> float:
-        capital_base = self._capital_base(metrics, trades)
+        capital_base = self._capital_base(metrics)
         if capital_base <= 0:
             return round(metrics.maximal_drawdown * 3, 2) if metrics.maximal_drawdown else 0.0
         buffer = max(capital_base, metrics.maximal_drawdown * 3)
@@ -846,9 +846,9 @@ class AIAnalyzer:
             buffer = max(buffer, metrics.maximal_drawdown / max(metrics.maximal_drawdown_pct / 100, 0.01) * 1.25)
         return round(buffer, 2)
 
-    def _capital_base(self, metrics: BacktestMetrics, trades: List[TradeRecord]) -> float:
+    def _capital_base(self, metrics: BacktestMetrics, trades: Optional[List[TradeRecord]] = None) -> float:
         values = [metrics.deposit or 0.0]
-        for trade in trades:
+        for trade in trades or []:
             if trade.balance is not None:
                 values.append(float(trade.balance))
             if trade.equity_at_exit is not None:
